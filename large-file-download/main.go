@@ -9,11 +9,15 @@ import (
 )
 
 func main() {
-	url := "https://files.icyflamestudio.com/512MB.zip" // Specify the URL of the file to download
-	destFileName := "downloaded_file.zip"               // Specify the name of the final file
+	url := "https://sample-videos.com/csv/Sample-Spreadsheet-500000-rows.csv" // Specify the URL of the file to download
 
-	// BruteDownload(url, destFileName)
-	DownloadFileInChunks(url, destFileName)
+	//brutedestFileName := "brutesample.csv" // Specify the name of the final file
+	chunkCsvName := "chunksample.csv"
+
+	// ExampleWriteAt()
+	//BruteDownload(url, brutedestFileName)
+	// DownloadFileInChunks(url, chunkCsvName)
+	DownloadFileInChunksWithProgressBar(url, chunkCsvName, 10)
 }
 
 func ExecutionTime(name string) func() {
