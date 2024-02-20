@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -30,6 +31,8 @@ func DownloadFileInChunksWithProgressBar(url string, destination string, numChun
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
+	fmt.Println(chunkSize)
+	fmt.Println(totalContentLength)
 	var wg sync.WaitGroup
 	for chunkNo := int64(0); chunkNo < int64(numChunks); chunkNo++ {
 		start := chunkNo * chunkSize
