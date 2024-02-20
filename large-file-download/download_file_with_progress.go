@@ -2,14 +2,20 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var (
 	initialChunkSize int64 = 2 * 1024 * 1024
+	// maxChunkSize            = 5 * 1024 * 1024 // 5 MB, maximum chunk size to avoid too large chunks
+	//minChunkSize            = 512 * 1024      // 512 KB, minimum chunk size to maintain efficiency
+	//progressUpdateSec       = 5
 )
 
 var totalDownloaded int64
@@ -26,13 +32,17 @@ func DownloadFileInChunksWithProgressBar(url string, destination string, numChun
 	totalContentLength := resp.ContentLength
 	// totalChunks := totalContentLength / int64(numChunks)
 	chunkSize := totalContentLength / int64(numChunks)
-	// Create a file if not exist
-	file, err := os.Create(url)
-	if err != nil {
-		log.Fatal("Error: ", err)
-	}
-	fmt.Println(chunkSize)
-	fmt.Println(totalContentLength)
+
+	go func() {
+		for {
+			select {
+			case <-time.After(5 * time.Second):
+				progress := float64(totalDownloaded) / float64(totalContentLength) * 100
+				fmt.Printf("\rDownload progress: %.2f%%", progress)
+			}
+		}
+	}()
+
 	var wg sync.WaitGroup
 	for chunkNo := int64(0); chunkNo < int64(numChunks); chunkNo++ {
 		start := chunkNo * chunkSize
@@ -41,14 +51,22 @@ func DownloadFileInChunksWithProgressBar(url string, destination string, numChun
 			end = totalContentLength - 1
 		}
 		wg.Add(1)
-		go DownloadChunk(&wg, file, chunkNo, start, end, url)
+		go DownloadChunk(&wg, chunkNo, start, end, url)
 	}
 	wg.Wait()
 	MergeFiles(numChunks, destination)
 }
 
-func DownloadChunk(wg *sync.WaitGroup, file *os.File, chunkNo, start, end int64, url string) {
+func DownloadChunk(wg *sync.WaitGroup, chunkNo, start, end int64, url string) {
 	defer wg.Done()
+
+	// Create a chunk file
+	outFile, err := os.Create(fmt.Sprintf("chunk_%d.tmp", chunkNo))
+	if err != nil {
+		fmt.Printf("Error creating chunk file %d: %s\n", chunkNo, err)
+		return
+	}
+	defer outFile.Close()
 
 	var newWg sync.WaitGroup
 	for start := int64(0); start < end; start += initialChunkSize {
@@ -58,12 +76,37 @@ func DownloadChunk(wg *sync.WaitGroup, file *os.File, chunkNo, start, end int64,
 		}
 
 		newWg.Add(1)
-		go Download(&newWg, url, chunkNo, start, chunkSize, &totalDownloaded)
+		go Download(&newWg, url, outFile, start, chunkSize, &totalDownloaded)
 	}
 	newWg.Wait()
 }
 
-func Download(wg *sync.WaitGroup, url string, chunkNo, start, chunkSize int64, totalDownloaded *int64) {
+func Download(wg *sync.WaitGroup, url string, destFile *os.File, start, chunkSize int64, totalDownloaded *int64) {
 	defer wg.Done()
+	end := start + chunkSize - 1
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		fmt.Printf("Error creating request: %s\n", err)
+	}
+
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("Error downloading chunk: %s\n", err)
+	}
+
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		fmt.Printf("Unexpected status code: %d\n", resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	destFile.Seek(int64(start), 0)
+	written, err := io.Copy(destFile, resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		fmt.Printf("Error writing chunk: %s\n", err)
+	}
+
+	atomic.AddInt64(totalDownloaded, written)
 
 }
