@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	url := "https://www.stats.govt.nz/assets/Uploads/Annual-enterprise-survey/Annual-enterprise-survey-2021-financial-year-provisional/Download-data/annual-enterprise-survey-2021-financial-year-provisional-csv.csv" // Specify the URL of the file to download
+	url := "https://www.stats.govt.nz/assets/Uploads/Business-operations-survey/Business-operations-survey-2022/Download-data/business-operations-survey-2022-business-finance.csv" // Specify the URL of the file to download
 
 	//brutedestFileName := "brutesample.csv" // Specify the name of the final file
 	chunkCsvName := "chunksample.csv"
