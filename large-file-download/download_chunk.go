@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
+
+	"golang.org/x/net/html/charset"
 )
 
 func DownloadFileInChunks(url, destFileName string) {
@@ -71,8 +74,18 @@ func DownloadChunks(url string, chunkNum, start, end int, wg *sync.WaitGroup) {
 	}
 	defer outFile.Close()
 
+	// Determine the character encoding of the response body
+	// and create a reader that converts to UTF-8 if necessary
+	utf8Reader, err := charset.NewReader(resp.Body, resp.Header.Get("Content-Type"))
+	if err != nil {
+		fmt.Println("Error creating UTF-8 reader:", err)
+		return
+	}
+	// Wrap the UTF-8 reader with a bufio.Reader for better efficiency
+	reader := bufio.NewReader(utf8Reader)
+
 	// Write the bytes to the chunk file
-	_, err = io.Copy(outFile, resp.Body)
+	_, err = io.Copy(outFile, reader)
 	if err != nil {
 		fmt.Printf("Error writing chunk %d: %s\n", chunkNum, err)
 		return
