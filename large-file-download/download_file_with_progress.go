@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/net/html/charset"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -35,28 +36,35 @@ func DownloadFileInChunksWithProgressBar(url string, destination string, numChun
 		}
 	}()
 
-	var wg sync.WaitGroup
+	var eg errgroup.Group
+
 	for key, val := range chunkSizeArr {
-		wg.Add(1)
-		DownloadChunk(&wg, key, val[0], val[1], url)
+		key, val1, val2 := key, val[0], val[1] // capture loop variables
+
+		eg.Go(func() error {
+			fmt.Println(key, val1, val2)
+			return DownloadChunk(key, val1, val2, url)
+		})
 	}
 
-	wg.Wait()
+	if err := eg.Wait(); err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
 	MergeFiles(numChunks, destination)
 }
 
-func DownloadChunk(wg *sync.WaitGroup, chunkNo int, inital, end int64, url string) {
-	defer wg.Done()
+func DownloadChunk(chunkNo int, inital, end int64, url string) error {
 
 	// Create a chunk file
 	outFile, err := os.Create(fmt.Sprintf("chunk_%d.tmp", chunkNo))
 	if err != nil {
-		fmt.Printf("Error creating chunk file %d: %s\n", chunkNo, err)
-		return
+		return fmt.Errorf("error creating chunk file %d: %s\n", chunkNo, err)
 	}
 	defer outFile.Close()
 
-	var newWg sync.WaitGroup
+	var eg errgroup.Group
+
 	var mu sync.Mutex
 
 	fileStart := int64(0)
@@ -65,44 +73,48 @@ func DownloadChunk(wg *sync.WaitGroup, chunkNo int, inital, end int64, url strin
 		if start+chunkSize > end {
 			chunkSize = end - start
 		}
-		newWg.Add(1)
+		eg.Go(func() error {
+			return Download(&mu, url, outFile, fileStart, start, chunkSize, &totalDownloaded)
+		})
+
 		// Download each chunk
-		Download(&newWg, &mu, url, outFile, fileStart, start, chunkSize, &totalDownloaded)
+
 		fileStart += chunkSize
 	}
 
 	// Wait for all chunks to be downloaded
-	newWg.Wait()
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("error downloading chunks: %w", err)
+	}
+
+	return nil
 }
 
-func Download(wg *sync.WaitGroup, mu *sync.Mutex, url string, destFile *os.File, fileStart, start, chunkSize int64, totalDownloaded *int64) {
-	defer wg.Done()
+func Download(mu *sync.Mutex, url string, destFile *os.File, fileStart, start, chunkSize int64, totalDownloaded *int64) error {
+
 	end := start + chunkSize - 1
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		fmt.Printf("Error creating request: %s\n", err)
-		return
+		return fmt.Errorf("Error creating request: %s\n", err)
 	}
 
 	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Printf("Error downloading chunk: %s\n", err)
-		return
+		return fmt.Errorf("Error downloading chunk: %s\n", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		fmt.Printf("Unexpected status code: %d\n", resp.StatusCode)
-		return
+		return fmt.Errorf("Unexpected status code: %d\n", resp.StatusCode)
 	}
 
 	// Determine the character encoding of the response body
 	// and create a reader that converts to UTF-8 if necessary
 	utf8Reader, err := charset.NewReader(resp.Body, resp.Header.Get("Content-Type"))
 	if err != nil {
-		fmt.Println("Error creating UTF-8 reader:", err)
-		return
+
+		return fmt.Errorf("Error creating UTF-8 reader:", err)
 	}
 	// Wrap the UTF-8 reader with a bufio.Reader for better efficiency
 	reader := bufio.NewReader(utf8Reader)
@@ -111,11 +123,11 @@ func Download(wg *sync.WaitGroup, mu *sync.Mutex, url string, destFile *os.File,
 	destFile.Seek(fileStart, 0)
 	written, err := io.Copy(destFile, reader)
 	if err != nil {
-		fmt.Printf("Error writing chunk: %s\n", err)
+		return fmt.Errorf("Error writing chunk: %s\n", err)
 	}
 	mu.Unlock()
-
 	atomic.AddInt64(totalDownloaded, written)
+	return nil
 
 }
 
